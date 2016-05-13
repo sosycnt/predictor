@@ -1,0 +1,225 @@
+---
+title: "ClusteringByInterestAndDifficulty"
+author: "Tyler Fitzgerald"
+date: "May 5, 2016"
+output: html_document
+---
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+```{r}
+library(party)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(corrgram)
+
+Sys.setlocale("LC_ALL", "C")
+```
+
+##Principle question. Does weekly reading interest or difficulty predict final project choice? In order to answer this question, given little data on final project choice, I have decided to use clustering of student self ratings of difficulty and interest to try and see if I can identify meaningful groups given a survey where students selected concepts that their final project would address
+```{r}
+IntDiff <- read.csv("InterestvsDiff.csv",header=TRUE,sep=",")
+plot(IntDiff)
+```
+
+##lookts like less difficulty means more interest. But it can't be that simple. And the question just doesn't concern when are students more interested but how that interest and dificulty leads to a final project choice. 
+```{r}
+corrDiffInt <- read.csv("InterestandDiffByWeek.csv",header=TRUE,sep=",")
+corrgram(corrDiffInt, #Tells R which dataframe to use
+          order=TRUE, 
+          lower.panel=panel.ellipse, 
+          upper.panel=panel.pts, text.panel=panel.txt, 
+          diag.panel=panel.minmax, 
+          main="Interest and Difficulty")
+``` 
+          
+##This is absolutely overwhelming. So many possible interactions. This is already with weekly average ratings. I am not sure just looking at correlations will be enough, there has to be a way to reduce the dimensionality of the data without just taking average interest and average difficulty. First I need to categorize possible project outcomes. 
+
+##For this analysis I focused mainly on the methods that students picked social network analysis, natural langauage processing, and prediction. Categories were created from a survey that asked about potential data sources and methods. I labeled students according to their chosen methods. If students elected to use 2 or more,I identified them as a mix of these methods. I then cleaned the student article ratings and turned them into weekly average ratings. As the week's somewhat can be broken down into a theme, we can see whether interest or challenge indicates eventual project choice. 
+
+##A NOTE ON TIDYING: Some tidying was done in Excel due to my inability to work with filter functions in R. I had a lot of trouble trying to merge similar rows and eventually just did it by hand. I have tried to piece together incomplete sets(numbers inputted incorrectly) and replaced all NAs with the average value for absences.I wanted to remove them but would be left with no complete data and did not think 0 is a code that makes sense. Assuming the average for each category was the best I could do. 
+
+##I began my reading in average weekly interest for 22 students.
+```{r}
+D1 <- read.table("InterestReadings.csv", sep = ",", header = TRUE)
+D2 <- dplyr::select(D1,c(-id,-Choice))
+```
+
+##I performed cluster analysis with four clusters to see if I could the pattern of three categories and unknown.
+```{r}
+interestClust <- scale(D2)
+fit <- kmeans(interestClust, 4) 
+D4 <- data.frame(D2, fit$cluster)
+names(D4) <- c(1:11,"Cluster")
+
+interestCluster <- D4
+
+InterestTidy <- tidyr::gather(D4, "Week", "AvgInt", 1:11)
+
+InteresttoGraph <- InterestTidy %>% group_by(Week, Cluster)
+
+Interest <- summarise(InteresttoGraph, avg = mean(AvgInt))
+
+Interest$Week <- as.numeric(Interest$Week)
+
+Interest$Cluster <- as.factor(Interest$Cluster)
+
+InterestPlot <-ggplot(Interest, aes(Week, avg, colour = Cluster)) + geom_line() + xlab("Week") + ylab("Average Interest")
+```
+
+##Interesting but these dont match up exactly with my predictions. I wonder why not. I think I will use decision trees to determine how important each variable is to the final outcomes that I have predicted.
+
+```{r}
+Sys.setlocale("LC_ALL", "C")
+
+RF <- read.table("InterestReadings.csv", sep = ",",header=TRUE)
+names(RF) <- c("id","Privacy","Theory","Tidy","Personal","StatisticsEd","SNA","SNATwo","Pred","PredTwo","NLP","NLPTwo","choice")
+```
+#Next I will check out the variation for some of the weeks to see if anything is strange. 
+```{r}
+
+counts <- count(RF, vars=choice)
+
+plot(counts)
+
+hist(RF$Privacy)
+hist(RF$Theory)
+hist(RF$Tidy)
+hist(RF$Personal) #split in interests
+hist(RF$StatisticsEd)
+hist(RF$SNA)
+hist(RF$SNATwo)
+hist(RF$Pred)
+hist(RF$PredTwo)
+hist(RF$NLP)
+hist(RF$NLPTwo)
+
+
+
+
+```
+#Nothing looks too strange. Though dismaying that the class seems to generally agree on interests. Perhaps the variance is higher than I think. 
+
+#Create a random forest model that one of the four choice outcomes from interest in each topic
+```{r}
+
+RF$choice <- as.factor(RF$choice)
+
+fit <- randomForest(choice ~ Privacy+Theory+Tidy+Personal+StatisticsEd+SNA+SNATwo+Pred+PredTwo+NLP+NLPTwo, RF)
+
+#randomForest(var ~(relates to) var2 and var 3 and var 4, dataFrame)
+```
+#Now generate a list of the importance of each variable according to the forest of decision trees you generated through random slices of the data. A higher "IncNodePurity"" means a more important variable
+```{r}
+IntTable<-data.frame(importance(fit2),c("Privacy","Theory","Tidy","Personal","StatisticsEd","SNA","SNATwo","Pred","PredTwo","NLP","NLPTwo"))
+
+names(IntTable) <- c("Importance","Week")
+                      
+#We can plot the ranked importance of the variables for easy interpretation:
+
+intPlot<-varImpPlot(fit, main="Importance of Week's Average Reading Interest", 
+           color = "Black",
+           bg=rev(heat.colors(11)))
+
+##I will add these importances to my cluster plot. 
+
+InterestPlotMarked<-InterestPlot+geom_point(data=IntTable, aes(x=c(1:11),y=Importance),colour= 'red',size = 3)+scale_x_discrete(breaks=c(1:11),labels=c("Privacy","Theory","Tidy","Personal","StatisticsEd","SNA","SNATwo","Pred","PredTwo","NLP","NLPTwo"))
+
+InterestPlotMarked
+```
+
+##Alright I'll do the same thing for difficulty
+```{r}
+RF2 <- read.table("DifficultyReadings.csv", sep = ",",header=TRUE)
+names(RF2) <- c("id","Privacy","Theory","Tidy","Personal","StatisticsEd","SNA","SNATwo","Pred","PredTwo","NLP","NLPTwo","choice")
+
+counts <- count(RF2, vars=choice)
+
+plot(counts)
+
+hist(RF2$Privacy)
+hist(RF2$Theory)
+hist(RF2$Tidy)
+hist(RF2$Personal)
+hist(RF2$StatisticsEd)
+hist(RF2$SNA)
+hist(RF2$SNATwo)
+hist(RF2$Pred)
+hist(RF2$PredTwo)
+hist(RF2$NLP)
+hist(RF2$NLPTwo)
+
+
+
+
+```
+
+
+```{r}
+
+RF2$choice <- as.factor(RF2$choice)
+
+fit2 <- randomForest(choice ~Privacy+Theory+Tidy+Personal+StatisticsEd+SNA+SNATwo+Pred+PredTwo+NLP+NLPTwo, RF2)
+
+
+DiffTable<-data.frame(importance(fit2),c("Privacy","Theory","Tidy","Personal","StatisticsEd","SNA","SNATwo","Pred","PredTwo","NLP","NLPTwo"))
+
+names(DiffTable) <- c("Importance","Week")
+                      
+
+#We can plot the ranked importance of the variables for easy interpretation:
+
+DiffPlot<-varImpPlot(fit2, main="Importance of Week's Average Reading Difficulty", 
+           color = "Black",
+           bg=rev(heat.colors(11)))
+
+H1 <- read.table("DifficultyReadings.csv", sep = ",", header = TRUE)
+H2 <- dplyr::select(H1,c(-id,-Choice))
+
+difficultyClust <- scale(H2)
+fit <- kmeans(difficultyClust, 4) ##should be 4 clusters as there are four possible states, prediction, SNA, NLP, and unknown
+H4 <- data.frame(H2, fit$cluster)
+names(H4) <- c(1:11,"Cluster")
+diffClusters<-H4
+
+difficultyTidy <- tidyr::gather(H4, "Week", "difficulty", 1:11)
+
+difficultytoGraph <- difficultyTidy %>% group_by(Week, Cluster)
+
+difficulty <- summarise(difficultytoGraph, avg = mean(difficulty))
+
+difficulty$Week <- as.numeric(difficulty$Week)
+
+difficulty$Cluster <- as.factor(difficulty$Cluster)
+
+DifficultyPlot<-ggplot(difficulty, aes(Week, avg, colour = Cluster)) + geom_line() + xlab("Week") + ylab("Average difficulty")
+
+DifficultyPlotMarked<-DifficultyPlot+geom_point(data=DiffTable, aes(x=c(1:11),y=Importance),colour= 'red',size = 3)+scale_x_discrete(breaks=c(1:11),labels=c("Privacy","Theory","Tidy","Personal","StatisticsEd","SNA","SNATwo","Pred","PredTwo","NLP","NLPTwo"))
+
+DifficultyPlotMarked
+
+```
+
+##Now I can compare them to each other and the actual project topics of the people in each cluster. 
+```{r}
+InterestPlotMarked
+```
+##Cluster 1 -1 SNA, 1 Pred
+##Cluster 2 - 1 SNA, 1 NLP, 2 All Three
+##Cluster 3 - 1 SNA/NLP, 2 SNA, 4 Predictions, 4 All Three
+##Cluster 4 - 1 All three, 3 Pred
+```{r}
+DifficultyPlotMarked
+```
+##Cluster 1 -2 AllThrees, 3 SNA, 3 Predictions
+##Cluster 2 - 3 Prediction, 1 All Three
+##Cluster 3 - 1SNA, 1NLP, 1SNA/NLP, 4 AllThree
+##Cluster 4 - 2 Pred, 1 AllThree
+
+##My belief was that I would get clusters of in both interest and difficulty that matched well with my predictions. This way I could make claims about the importance of each topic and what interest looked like for each group. Unfortunately, my clusters do not line up neatly with the four possible choices. This is not necessarily a negative result for the principle question. These two sets of four clusters offer four possilbe populations that corresponded somewhat with project choice. For example for Interest Cluster 3 does have a peak average interest on the SNA week and contain the most SNA projects. It is possible this grouping does relate somewhat to interest on the final project. We can see from the decision tree importance ranking that certain readings that were important for predicting the final choice concern controversial weeks with peaks for some clusters and troughs for others. This is a good sign that the cluster's represent some piece of final project choice. 
+
+##While these clusters do not provide a classifier or method of predicting someone's final project choice, they do provide us with some ways of grouping student interest and difficult over the course of a semester. While four clusters may not be necessarily appropriate, further inquiry could be performed to determine the number of clusters. What the clusters may now represent now are groups within the classroom that would enjoy different order of instruction. What if reading order and assignment could be flexible to student interest and difficulty of last reading? It seems that this preliminary research indicates there are several different preferences for reading within one class. Cluster 1 seems to include academics whose interest matches with more traditional articles and plunges with tecnical type documents. Cluster 2 is the exact opposite. These observations and these clusters could be used predict student interest. If for example, their peak interests is for data tidying, like those in cluster 4, it may be OK to simply start showing them technical readings. Tracking student interest and perceived difficulty of text may be a useful technique to providing useful advising and potentially creating a method of automatically suggesting future reading. This analysis was severely limited by a small data set and incomplete knowledge about final project choice. It was a great exercise in seeing how difficult it is to answer a seemingly small question. 
+
+
